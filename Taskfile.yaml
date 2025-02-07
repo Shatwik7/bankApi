@@ -1,0 +1,15 @@
+version: '3'
+
+tasks:
+  build:
+    cmds:
+      - go build -o bin/
+
+  run:
+    deps: [build]
+    cmds:
+      - ./bin/bankApi
+
+  test:
+    cmds:
+      - go test -v ./...
