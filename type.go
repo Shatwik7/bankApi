@@ -49,7 +49,7 @@ func NewAccount(firstName, lastName string, password string) (*Account, error) {
 		FirstName:         firstName,
 		LastName:          lastName,
 		Number:            int64(rand.Intn(10000)),
-		Balance:           0,
+		Balance:           1000,
 		EncryptedPassword: string(Enpass),
 		CreatedAt:         time.Now().UTC(),
 	}, nil

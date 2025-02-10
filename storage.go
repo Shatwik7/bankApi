@@ -14,6 +14,7 @@ type Storage interface {
 	UpdateAccount(*Account) error
 	GetAccountByID(int) (*Account, error)
 	GetAccounts() ([]*Account, error)
+	TransferAmount(FROM_Account_id int, TO_Account_id int, amount int) (bool, error)
 }
 
 type PostgresStore struct {
@@ -76,9 +77,31 @@ func (s *PostgresStore) UpdateAccount(*Account) error {
 	return nil
 }
 
-// func (s *PostgresStore) TransferAmount(Account_id int, amount int) (bool, error) {
-// 	query:=``
-// }
+func (s *PostgresStore) TransferAmount(FROM_Account_id int, TO_Account_id int, amount int) (bool, error) {
+	query := `
+		WITH deducted AS (
+			UPDATE account 
+			SET balance = balance - $3 
+			WHERE id = $1 AND balance >= $3 
+			RETURNING id
+		), credited AS (
+			UPDATE account 
+			SET balance = balance + $3 
+			WHERE id = $2 
+			RETURNING id
+		)
+		SELECT (SELECT COUNT(*) FROM deducted) = 1 
+			AND (SELECT COUNT(*) FROM credited) = 1;
+	`
+
+	var success bool
+	err := s.db.QueryRow(query, FROM_Account_id, TO_Account_id, amount).Scan(&success)
+	if err != nil {
+		return false, fmt.Errorf("transaction failed: %v", err)
+	}
+
+	return success, nil
+}
 
 func (s *PostgresStore) DeleteAccount(id int) (bool, error) {
 	query := `DELETE FROM account WHERE id=$1 ;`

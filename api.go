@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -18,6 +19,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) error {
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(v)
 }
+func StoreInContext(r *http.Request, key string, val any) *http.Request {
+	ctx := context.WithValue(r.Context(), key, val)
+	return r.WithContext(ctx)
+}
 func getIDFromToken(token *jwt.Token) (int64, error) {
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
@@ -29,6 +34,24 @@ func getIDFromToken(token *jwt.Token) (int64, error) {
 	}
 	claimsIDInt64 := int64(claimsID)
 	return claimsIDInt64, nil
+}
+func withJWTAuthForTransfer(handerFunc http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tokenString := r.Header.Get("Authorization")
+		token, err := validateJWT(tokenString)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, ApiError{Error: "INVALID TOKEN"})
+			return
+		}
+		userid, err := getIDFromToken(token)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, err)
+			return
+		}
+		fmt.Println("userId : ", userid)
+		r = StoreInContext(r, "userId", userid)
+		handerFunc(w, r)
+	}
 }
 func withJWTAuth(handerFunc http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +73,8 @@ func withJWTAuth(handerFunc http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, ApiError{Error: "param should be a integer"})
 			return
 		}
-
+		fmt.Println("userId : ", id)
+		r = StoreInContext(r, "userId", id)
 		if userid != int64(id) {
 			writeJSON(w, http.StatusUnauthorized, ApiError{Error: "Unuthorized"})
 			return
@@ -81,7 +105,7 @@ func validateJWT(tokenString string) (*jwt.Token, error) {
 	return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		// Don't forget to validate the alg is what you expect:
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+			return nil, fmt.Errorf("error validating")
 		}
 
 		// hmacSampleSecret is a []byte containing your secret, e.g. []byte("my_secret_key")
@@ -118,7 +142,7 @@ func (s *APIServer) Run() {
 	router := mux.NewRouter()
 	router.HandleFunc("/account", makeHttpHandelFunc(s.handleAccount))
 	router.HandleFunc("/account/{id}", withJWTAuth(makeHttpHandelFunc(s.handleAccountById))).Methods(http.MethodGet, http.MethodDelete)
-	router.HandleFunc("/transfer", makeHttpHandelFunc(s.handleTransfer)).Methods(http.MethodPost)
+	router.HandleFunc("/transfer", withJWTAuthForTransfer(makeHttpHandelFunc(s.handleTransfer))).Methods(http.MethodPost)
 	router.HandleFunc("/login", makeHttpHandelFunc(s.handleLogin)).Methods(http.MethodPost)
 	log.Println("BANK API RUNNING ON PORT :", s.listenAddr)
 	http.ListenAndServe(s.listenAddr, router)
@@ -159,7 +183,7 @@ func (s *APIServer) handleGetAccountById(w http.ResponseWriter, r *http.Request)
 	return writeJSON(w, http.StatusAccepted, account)
 }
 
-func (s *APIServer) handleGetAccounts(w http.ResponseWriter, r *http.Request) error {
+func (s *APIServer) handleGetAccounts(w http.ResponseWriter, _ *http.Request) error {
 	accounts, err := s.store.GetAccounts()
 	if err != nil {
 		return err
@@ -187,7 +211,7 @@ func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 	}
 	log.Println("account:", account)
 	log.Println("token :", tokenString)
-
+	defer r.Body.Close()
 	return writeJSON(w, http.StatusCreated, account)
 }
 
@@ -220,6 +244,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return writeJSON(w, http.StatusInternalServerError, ApiError{Error: "Server Error"})
 	}
+	defer r.Body.Close()
 	return writeJSON(w, http.StatusAccepted, &LoginResponse{
 		ID:        account.ID,
 		FirstName: account.FirstName,
@@ -235,6 +260,11 @@ func (s *APIServer) handleTransfer(w http.ResponseWriter, r *http.Request) error
 	if err := json.NewDecoder(r.Body).Decode(transferReq); err != nil {
 		return err
 	}
+	userID, ok := r.Context().Value("userId").(int64)
+	if !ok {
+		return writeJSON(w, http.StatusBadRequest, ApiError{Error: "failure"})
+	}
+	s.store.TransferAmount(int(userID), transferReq.ToAccount, transferReq.Amount)
 	defer r.Body.Close()
 
 	return writeJSON(w, http.StatusAccepted, transferReq)
