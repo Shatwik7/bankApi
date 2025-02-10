@@ -1,0 +1,17 @@
+stages:
+  - test
+  - build
+
+# Test Job
+test:
+  stage: test
+  script:
+    - echo "Running tests..."
+    - go test ./...
+
+# Build Job
+build:
+  stage: build
+  script:
+    - echo "Building project..."
+    - go build -o myapp
